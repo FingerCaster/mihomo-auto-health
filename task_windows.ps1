@@ -6,7 +6,8 @@ param(
     [string]$Daemon,
     [string]$DataDir,
     [string]$LogFile,
-    [string]$XmlFile
+    [string]$XmlFile,
+    [string]$Description = 'Clash Party automatic node quarantine and recovery'
 )
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -32,6 +33,6 @@ switch ($Action) {
         $periodic = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) -RepetitionInterval (New-TimeSpan -Minutes 1)
         $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
         $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger @($logon, $periodic) -Principal $principal -Settings $settings -Description 'Clash Party automatic node quarantine and recovery' -Force | Out-Null
+        Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger @($logon, $periodic) -Principal $principal -Settings $settings -Description $Description -Force | Out-Null
     }
 }

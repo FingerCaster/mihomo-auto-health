@@ -116,7 +116,7 @@ class HealthRulesTest(unittest.TestCase):
         code = h.render_override(['node (v6) | [A]+', 'missing-node'], P)
         runner = "const vm=require('node:vm');const x=JSON.parse(require('node:fs').readFileSync(0,'utf8'));const c=vm.createContext({});vm.runInContext(x.code,c);c.cfg=x.config;let once=vm.runInContext('main(cfg)',c);let twice=vm.runInContext('main(cfg)',c);process.stdout.write(JSON.stringify({once,twice}));"
         result = json.loads(subprocess.check_output([h.node_binary(), '-e', runner],
-             input=json.dumps({'code': code, 'config': cfg}), text=True))
+             input=json.dumps({'code': code, 'config': cfg}), text=True, encoding='utf-8'))
         expected = h.transform(cfg, ['node (v6) | [A]+', 'missing-node'], P)
         self.assertEqual(result['once'], expected)
         self.assertEqual(result['twice'], expected)

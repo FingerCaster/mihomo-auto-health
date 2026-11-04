@@ -480,25 +480,13 @@ def apply_rules(excluded, policy, sock):
     return True
 
 
-def run_once(force_probe=False):
-    policy = {**DEFAULTS, **json.loads((HOME_DIR / 'policy.json').read_text(encoding='utf-8'))}
-    profile = yaml_load((APP / 'profile.yaml').read_text(encoding='utf-8'))
-    if profile.get('current') != policy['profile_id']:
-        event('inactive_profile')
-        return
-    sock = find_core()
-    if not sock:
-        event('core_not_running')
-        return
-    data = api(sock, '/proxies')['proxies']
-    runtime = yaml_load((APP / 'work/config.yaml').read_text(encoding='utf-8'))
+def evaluate_health(runtime, data, state, policy, probe_node, force_probe=False):
+    """Shared health state machine; client adapters own I/O and configuration."""
     names = {p['name'] for p in runtime.get('proxies', [])}
     eligible = set()
     for g in runtime.get('proxy-groups', []):
         if g.get('type') == 'url-test':
             eligible.update(data.get(g['name'], {}).get('all', []))
-    state_path = HOME_DIR / 'state.json'
-    state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {'nodes': {}}
     nodes = state.setdefault('nodes', {})
     # Track existing automatic candidates plus previously quarantined nodes.
     now = time.time()
@@ -513,7 +501,7 @@ def run_once(force_probe=False):
     due = [n for n, e in nodes.items() if n in names and e.get('quarantined') and
            (force_probe or e.get('next_probe', 0) <= now)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=policy['probe_workers']) as pool:
-        futures = {pool.submit(probe, sock, n, policy): n for n in due}
+        futures = {pool.submit(probe_node, n): n for n in due}
         for future in concurrent.futures.as_completed(futures):
             name = futures[future]
             if recover(nodes[name], future.result(), policy, time.time()):
@@ -526,11 +514,31 @@ def run_once(force_probe=False):
             del nodes[name]
     excluded = {n for n, e in nodes.items() if e.get('quarantined') and n in names}
     state.update(updated_at=now, profile_id=policy['profile_id'])
+    return excluded, len(due)
+
+
+def run_once(force_probe=False):
+    policy = {**DEFAULTS, **json.loads((HOME_DIR / 'policy.json').read_text(encoding='utf-8'))}
+    profile = yaml_load((APP / 'profile.yaml').read_text(encoding='utf-8'))
+    if profile.get('current') != policy['profile_id']:
+        event('inactive_profile')
+        return
+    sock = find_core()
+    if not sock:
+        event('core_not_running')
+        return
+    data = api(sock, '/proxies')['proxies']
+    runtime = yaml_load((APP / 'work/config.yaml').read_text(encoding='utf-8'))
+    state_path = HOME_DIR / 'state.json'
+    state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {'nodes': {}}
+    excluded, recovery_probes = evaluate_health(
+        runtime, data, state, policy, lambda name: probe(sock, name, policy), force_probe)
+    nodes = state['nodes']
     atomic_write(state_path, json.dumps(state, ensure_ascii=False, indent=2))
     applied = apply_rules(excluded, policy, sock)
     snapshot = {'updated_at': dt.datetime.now().isoformat(timespec='seconds'),
                 'profile_id': policy['profile_id'], 'quarantined_count': len(excluded),
-                'recovery_probes': len(due), 'rules_applied': applied,
+                'recovery_probes': recovery_probes, 'rules_applied': applied,
                 'recovering': {n: e.get('recovery_streak', 0) for n, e in nodes.items()
                                if n in excluded and e.get('recovery_streak', 0)}}
     atomic_write(HOME_DIR / 'status.json', json.dumps(snapshot, ensure_ascii=False, indent=2))
